@@ -1,6 +1,5 @@
 """Page extraction and section chunks with original provenance."""
 
-import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,10 +67,10 @@ def extract_pdf(path: Path, ocr=None) -> list[Page]:
 
 
 def chunks_from_pages(pages: list[Page]) -> list[Chunk]:
-    """Split numbered headings without separating rules from their exceptions."""
+    """Preserve each short SOP page; token limits are checked before embedding."""
     chunks = []
     for page in pages:
-        parts = re.split(r"(?m)(?=^\s*\d{1,2}[.)]\s+)", page.text)
+        parts = [page.text]
         for index, text in enumerate(parts):
             text = text.strip()
             if not text:

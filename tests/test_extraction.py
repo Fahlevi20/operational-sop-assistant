@@ -16,11 +16,11 @@ def test_native_text_retains_source_and_sections(tmp_path):
     pages = extract_pdf(path)
     assert pages[0].method == "native"
     chunks = chunks_from_pages(pages)
-    assert len(chunks) == 2
+    assert len(chunks) == 1
     assert chunks[0].source == "policy.pdf"
     assert chunks[0].page == 1
     assert "15 minutes" in chunks[0].text
-    assert "confirmation" in chunks[1].text
+    assert "confirmation" in chunks[0].text
     assert chunks == chunks_from_pages(pages)
 
 

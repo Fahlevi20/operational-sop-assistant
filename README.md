@@ -1,71 +1,126 @@
 # Operational SOP Assistant
 
-A document-grounded AI assistant for operational SOPs, built with Python and Qdrant, with source citations and safe handling of unsupported questions.
+A Python/Qdrant proof of concept for answering Indonesian operational SOP questions with document/page citations, clarification for ambiguous requests, and honest handling of missing information.
 
-Recruitment proof of concept for PT Inti Nya Teknologi. Runs locally as a CLI; OpenAI provides embeddings and answer generation. No Docker, GPU, or frontend required.
+**Start with the results:** [readable demonstration and metric report](docs/ragas-comprehensive-report.md) · [evaluation notes and limitations](docs/evaluation.md).
 
-## Development status
+## What runs where
 
-Work in progress, not the final recruitment submission. The current inference adapter uses OpenAI; migration to local EmbeddingGemma embeddings and OpenRouter free-model answering is planned but **not integrated yet**. The EmbeddingGemma download utility is available via `uv run python -m sop_assistant.download`. Offline tests and extraction have been verified; live ingestion/answering and Ragas scoring are not yet validated. The attempted OpenAI embedding request was blocked by exhausted API credits.
+- **Local:** PDF extraction, conditional Windows OCR, CPU `google/embeddinggemma-300m` embeddings (768 dimensions), and persistent Qdrant local mode.
+- **LLM endpoint:** an authorized OpenAI-compatible service generates answers and optionally judges evaluation results. The tested setup used a user-managed OmniRoute endpoint and route `cx/gpt-5.6-luna-low`. This route name is provider-specific; it is not a guarantee of the underlying model identity or availability.
+- **Not required:** Docker, GPU, web UI, deployment, or a paid embedding API.
 
-HR has approved a public repository. Supplied PDFs remain excluded from this initial code snapshot; reviewers can place the supplied SOPs in `Knowledge Base/`.
+This is a recruitment proof of concept, not a production service. HR approved a public repository. The supplied PDFs are not bundled; reviewers must provide their copies.
 
-## Quick start (PowerShell)
+## Quick start — PowerShell
 
-Prerequisites: Python 3.11+, [uv](https://docs.astral.sh/uv/), OpenAI API access. The included scan OCR adapter requires Windows with an installed OCR language pack. Tested locally with Windows 11 and Python 3.13.
+Tested on Windows 11 with Python 3.13. Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), enough disk/RAM for the local embedding model, a Windows OCR language pack, and access to a compatible LLM endpoint. Image-only PDFs currently require Windows OCR.
+
+1. Place the four SOP PDFs in `Knowledge Base/`. Do **not** place the assignment brief there.
+2. Install dependencies and create your local configuration:
 
 ```powershell
 uv sync --locked
+# Only copy if .env does not already exist.
 Copy-Item .env.example .env
-# Edit .env locally and set OPENAI_API_KEY. Never share the key.
+```
+
+3. Edit `.env` locally. For the tested route, use:
+
+```dotenv
+LLM_PROVIDER=omniroute
+OMNIROUTE_BASE_URL=http://localhost:20128/v1
+OMNIROUTE_API_KEY=replace-with-your-own-key
+OMNIROUTE_MODEL=cx/gpt-5.6-luna-low
+EMBEDDING_BACKEND=local
+LOCAL_EMBEDDING_PATH=data/models/embeddinggemma-300m
+QDRANT_PATH=data/qdrant-gemma-pages
+KB_PATH=Knowledge Base
+```
+
+**The localhost endpoint is not included in this repository.** Reviewers must run their own OmniRoute instance or configure another supported provider below. The application does not change OmniRoute server settings. The template may name an earlier mini-model route; select a model available on your endpoint, with strict JSON-schema support. The mini route encountered rate limits during development; Luna was used for the recorded evaluation.
+
+4. Accept the [EmbeddingGemma model terms](https://huggingface.co/google/embeddinggemma-300m), authenticate, and download the model:
+
+```powershell
+uv run hf auth login
+uv run python -m sop_assistant.download
+```
+
+The download is explicit, roughly 1.2 GB for the main weights, and requires internet/Hugging Face access. Embedding inference thereafter uses the downloaded snapshot locally.
+
+5. Extract, inspect, index, and ask:
+
+```powershell
 uv run sop extract
-# Inspect data/pages.json, especially numbers and identifiers from scans.
+# Inspect data/pages.json, particularly scan numbers and P1/SEV1 identifiers.
 uv run sop ingest
 uv run sop ask "Berapa target respons awal P1? Apakah harus selesai dalam 15 menit?"
 ```
 
-Put the four supplied SOP PDFs under `Knowledge Base/` (or set `KB_PATH`). Original recruiting PDFs are intentionally excluded from Git pending permission to redistribute. Reviewers need their own supplied copy. Do not put the assignment brief in the knowledge-base folder.
+The selected provider's API key must be configured even for local ingestion: the current CLI initializes the answering client alongside the embedding adapter. Local ingestion itself makes no LLM or hosted embedding request.
 
-Activation of `.venv` is unnecessary: `uv run` uses the project environment automatically. `uv.lock` records exact dependencies.
+`uv run` handles the virtual environment; PowerShell activation or execution-policy changes are unnecessary. Repeating ingestion with an unchanged corpus skips embedding. Use a **new `QDRANT_PATH`** when changing documents or embedding/index configuration; existing indexes are not destructively rebuilt.
 
-## Configuration and credential hygiene
+### Other answering providers
 
-Copy `.env.example` once; do not overwrite an existing `.env`. Environment variables already present in the shell take precedence over `.env`.
+Keep `EMBEDDING_BACKEND=local` to retain local embeddings. Replace the LLM settings with either:
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `OPENAI_API_KEY` | none | Required for ingest, ask, and live evaluation |
-| `OPENAI_MODEL` | `gpt-4.1-mini` | Structured-output answering model; verify account access |
-| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
-| `OPENAI_EMBEDDING_DIMENSIONS` | `1536` | Qdrant vector dimension |
-| `QDRANT_PATH` | `data/qdrant` | Persistent local database directory |
-| `KB_PATH` | `Knowledge Base` | SOP PDF directory |
-| `OPENAI_JUDGE_MODEL` | `gpt-4.1-mini` | Ragas judge model |
-
-`.env`, `.venv/`, extracted text, vectors, and generated evaluation output are ignored. The program does not log API keys; provider errors are sanitized. Do not commit screenshots or logs containing credentials. The golden set includes SOP-derived references and should remain in the private repository until sharing permission is clarified.
-
-**Data flow and billing:** ingestion sends all extracted SOP chunks to OpenAI for embedding. Questions and retrieved chunks are sent for answering. Ragas judging sends saved answers and contexts to OpenAI again. These commands use paid API requests; extraction and offline tests do not. No document content is sent by `extract`. Ragas telemetry is disabled in the judge runner.
-
-## Architecture
-
-```text
-SOP PDFs -> native/layout-aware extraction -> OCR only for empty text pages
-         -> numbered-section chunks + filename/page/heading metadata
-         -> OpenAI embeddings -> persistent local Qdrant
-Question -> embedding -> top-8 retrieval -> structured OpenAI answer
-         -> validate evidence IDs -> statements + trusted document/page citations
+```dotenv
+LLM_PROVIDER=openai
+OPENAI_API_KEY=replace-with-your-own-key
+OPENAI_MODEL=your-accessible-json-schema-model
 ```
 
-- **Extraction:** PyMuPDF reads text and positional lines. A central-gutter heuristic preserves column order. Image-only pages use Windows OCR via an in-memory PowerShell/WinRT bridge. No execution-policy change is needed.
-- **Chunking:** SOP numbered sections keep rules and exceptions together. Stable UUIDs preserve provenance. This is optimized for the provided short SOPs, not arbitrary long documents.
-- **Storage:** actual Qdrant client local persistent mode, cosine similarity. No server process is needed. Only one process may use the same directory at a time.
-- **Reproducibility:** a manifest records source hashes, embedding model, dimensions, and chunking version. Unchanged ingestion skips API calls. Changed source/configuration requires a new `QDRANT_PATH`; the CLI does not delete old data automatically.
-- **Answering:** structured statuses distinguish `answered`, `needs_clarification`, and `unsupported`. Each substantive statement references retrieved evidence. Citation filenames/pages are resolved from stored metadata rather than trusted from model output.
-- **Safety:** retrieved text is untrusted evidence, not instructions. Missing information should produce abstention rather than invented policy. API failures are operational errors, not unsupported answers.
+or:
 
-The JSON answer includes statements, evidence IDs, resolved citations, retrieved text/scores, and latency for auditability. Reference validation does **not** prove semantic entailment; factual correctness needs evaluation.
+```dotenv
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=replace-with-your-own-key
+OPENROUTER_MODEL=your-accessible-json-schema-model
+```
 
-## Tests and quality
+Model access, structured-output compatibility, limits and billing depend on your provider. These alternatives are configurable but were not used for the reported comprehensive run. Free routes are not guaranteed to be available or compatible.
+
+## Configuration and privacy
+
+| Setting | Purpose |
+| --- | --- |
+| `LLM_PROVIDER` | `omniroute`, `openai`, or `openrouter`; code fallback is `openai` |
+| `<PROVIDER>_API_KEY`, `<PROVIDER>_MODEL` | Your authorized answering credentials and model |
+| `<PROVIDER>_BASE_URL` | Optional compatible endpoint override |
+| `EMBEDDING_BACKEND` | Set `local` for the tested EmbeddingGemma configuration |
+| `LOCAL_EMBEDDING_PATH` | Existing downloaded model directory |
+| `QDRANT_PATH` | Persistent local index; use a distinct path for incompatible configurations |
+| `KB_PATH` | SOP directory; defaults to `Knowledge Base` |
+| `JUDGE_MODEL` | Optional evaluation-model override; otherwise uses the selected provider's model setting |
+
+Shell environment variables take precedence over `.env`. Keep real keys only in local configuration. `.env`, `.claude/`, model weights, local databases, and generated `data/` artifacts are excluded from Git. Do not publish credential-bearing logs or screenshots.
+
+With **local embeddings**, ingestion does not send SOP text to an embedding API. Answering sends the question and retrieved SOP text to the configured LLM endpoint; evaluation sends saved answers, references and evidence to its judge. Processing beyond a proxy depends on its upstream provider. Extraction, offline tests and Markdown conversion make no LLM calls. Model download contacts Hugging Face. Ragas telemetry is disabled by the evaluator. Hosted LLM/judge requests may incur charges.
+
+## Architecture and decisions
+
+```text
+SOP PDFs -> native, layout-aware extraction -> OCR only for insufficient text
+         -> whole-page chunks + source/page metadata
+         -> local EmbeddingGemma -> persistent Qdrant (cosine)
+Question -> local query embedding -> Qdrant retrieval (limit 16)
+         -> structured LLM response -> citation-ID validation
+         -> statements + trusted document/page citations
+Saved answers -> optional Ragas/custom checks -> JSON -> offline Markdown report
+```
+
+- **Extraction:** PyMuPDF line coordinates handle the supplied two-column layout. A conditional PowerShell/WinRT OCR adapter handles scans without changing execution policy.
+- **Chunking:** each supplied SOP is one short page and fits the model's 2,048-token input limit, so preserving the whole page keeps rules and exceptions together. The adapter checks prompted token length and rejects oversized input rather than silently truncating it. Automatic splitting/parent–child retrieval is not implemented.
+- **Retrieval:** the limit is 16; this corpus has four page chunks, so every question receives all four pages, ordered by similarity. This favors coverage for a tiny corpus, not selective retrieval at scale.
+- **Storage:** local Qdrant avoids a server dependency. Stable IDs and a corpus/configuration manifest protect repeat ingestion and detect stale/incomplete indexes. Only one process may access a given database path at a time.
+- **Answers:** `answered`, `needs_clarification`, and `unsupported` distinguish response decisions. An English system prompt requests Indonesian output and cited factual statements. Strict JSON schema, local validation, and one bounded repair attempt handle malformed outputs. Filenames/pages come from stored metadata, not model invention.
+- **Safety boundary:** evidence is treated as untrusted data. Existing citation IDs establish provenance, **not semantic truth**. The free-text message contract is prompted and evaluated, but not fully enforced semantically in code.
+
+The CLI returns JSON containing statements, evidence IDs, resolved citations, retrieved context/scores, and latency for auditing.
+
+## Tests
 
 ```powershell
 uv run pytest -q
@@ -74,38 +129,50 @@ uv run ruff format --check src tests
 uv run pylint src/sop_assistant
 ```
 
-Offline tests use synthetic PDFs, mocked API boundaries, and real temporary local Qdrant storage. They require no key and do not call OpenAI. Pylint is applied to application code; Ruff also checks tests. Narrow lint suppressions document the CLI dispatcher complexity and the sanitized external SDK boundary.
+Latest verified implementation run: **43 tests passed**, Ruff passed, Pylint **10.00/10**. Offline tests use synthetic PDFs, mocked model boundaries and temporary real Qdrant storage; no credentials or hosted calls are needed. This is not a claim of clean-machine verification.
 
-## Golden set and live evaluation
+## Demonstration and evaluation
 
-`eval/questions.json` contains ten hand-authored Indonesian questions with expected status, reference answer, and source page/section. Cases cover answerable, cross-document, ambiguous, and unsupported requests. They are a development set, not a held-out benchmark.
+Ten human-authored cases in `eval/questions.json` include answerable, ambiguous and unsupported questions with references and source annotations. To generate and evaluate a **new** run:
 
 ```powershell
-# Requires configured key and a completed ingestion. Makes embedding + LLM calls.
-uv run sop evaluate
-# Additional paid LLM judge calls; optional dependencies are separate.
-uv sync --locked --group eval
-uv run --group eval python -m sop_assistant.evaluation
+# Local embeddings and hosted answering; requires ingestion and configured credentials.
+uv run sop evaluate --output data/my-answers.json
+# Additional hosted judge calls; optional evaluation dependencies.
+uv run --group eval python -m sop_assistant.evaluation --input data/my-answers.json --output data/my-scores.json
+# Offline conversion, no model calls.
+uv run python -m sop_assistant.report --input data/my-scores.json --output data/my-report.md
 ```
 
-Actual generation outputs are written incrementally to `data/evaluation.json`; Ragas scores go to `data/ragas.json`. The Ragas runner uses the collection-based **Faithfulness** metric for answered cases. It separately records expected-status agreement. Abstention/clarification cases are not assigned a misleading faithfulness score; review them manually. References are preserved for that review; this runner does not claim to compute reference correctness or context recall.
+Choose unused output filenames: the judge and Markdown converter refuse to overwrite existing results. The answer-generation command saves incrementally and can replace its selected output. A failed run may be partial; inspect completion counts and metric errors.
 
-Ragas 0.4 imports legacy LangChain modules, so the evaluation group pins compatible LangChain versions. This keeps the heavier evaluation stack separate from the application.
+### Recorded result — 26 October 2026
 
-Review every result for factual support, complete exceptions, citation correctness, retrieval coverage, and refusal quality. Do not treat a valid reference or high judge score as proof of correctness. See [evaluation notes](docs/evaluation.md).
+| Measurement | Result |
+| --- | ---: |
+| Expected-status agreement | 10/10 |
+| Faithfulness, factual statements across all statuses | 0.983 (10 cases) |
+| Factual Correctness F1 | 0.800 (6 cases) |
+| Context Precision / Recall | 0.606 / 1.000 (6 cases) |
+| Response Relevancy | 0.811 (6 cases) |
+| Structural citation coverage / ID validity / metadata | 1.000 each (10 cases) |
+| Custom citation-support judge | 0.910 (10 case-level means) |
+| Custom message-contract / decision-quality rubrics | 1.000 each (10 cases) |
 
-## Known limitations
+These are separate measurements, **not a combined accuracy score**. Reference/retrieval metrics apply to expected-answerable cases. Faithfulness also checks factual statements in unsupported responses; pure absence notices are not forced into grounding scores. Skipped/errors/uncertain judgments are excluded from averages and displayed separately. Response Relevancy uses local EmbeddingGemma. Citation and behavioral rubrics are custom checks, not official Ragas metrics.
 
-- Scan OCR currently requires Windows. A portable deployment should add Tesseract with Indonesian language data or another tested OCR adapter. This alternative is not implemented here.
-- The available Windows recognizer may be English. Observed raw OCR substitutions include `Pl` for `P1` and `SEVI` for `SEV1`. Extracted text is retained without silently rewriting source evidence. Check scans visually before relying on high-stakes answers.
-- Column detection is a heuristic for the provided layout, not general document layout understanding. Sparse/corrupted text layers may need manual review even if they pass the minimum text-length check.
-- Exact section splitting assumes numbered SOP headings; long-document token-aware splitting is not implemented.
-- Top-8 dense retrieval may miss evidence or retrieve unrelated sections. No reranker or calibrated answerability threshold is claimed.
-- Prompting and structural citation validation reduce—but cannot eliminate—hallucinations or prompt injection.
-- Qdrant local mode is single-process and is not a production service architecture.
-- Models are configurable; API availability, network access, rate limits, and charges remain external dependencies.
-- KB01 contains a status-list inconsistency: `Menunggu Informasi` appears in recording instructions but not the later enumerated statuses. The assistant should not invent a reconciliation.
+**Conclusion:** required evidence was available, and the uncited-message failure did not recur in this run. Some closure exceptions, multi-document citation support, and reference agreement need review. High recall is expected when all four pages are retrieved. Judge judgments are not independently verified truth, and these ten development questions are not a held-out production benchmark.
 
-## Submission
+The [full report](docs/ragas-comprehensive-report.md) contains questions, cited answers, references and review reasons. [Evaluation notes](docs/evaluation.md) explain failures and priorities. Scores are bound to saved input hashes; historical generation metadata absent from those files is explicitly unknown. Changing prompts/answers requires new judging, not reusing old scores. Ragas 0.4's compatibility dependencies are isolated in the optional `eval` group.
 
-Keep the repository private until HR confirms sharing permissions and reviewer access. Submit the repository link plus actual demonstration/evaluation outputs before **27 October 2026, 11:00** in the timezone agreed with HR. A private link alone does not grant access. No remote repository is created or published by this project.
+## Limitations and next improvements
+
+- **OCR:** Windows-only scan fallback; English recognizer substitutions such as `Pl`/`SEVI` remain in raw evidence. Verify scans visually. Portable Indonesian OCR is a future improvement.
+- **PDF layout:** column ordering is a heuristic for the supplied PDFs, not a general layout engine; nonempty corrupted text layers may still require review.
+- **Scale:** oversized pages fail clearly; no automatic long-document splitting, reranker or calibrated answerability threshold is implemented.
+- **Grounding:** schema validation cannot guarantee entailment or prevent all prompt injection. Review policy-sensitive answers and flagged citations manually.
+- **Deployment:** Qdrant local mode and a user-managed LLM endpoint are proof-of-concept choices, not a multi-user production architecture.
+- **Evaluation:** expand held-out/adversarial cases and calibrate judges with independent human review before setting release thresholds. Generator/judge model correlation can bias scores.
+- **Source ambiguity:** KB01 uses `Menunggu Informasi` in recording instructions but omits it from a later status list; the assistant should not invent a reconciliation.
+
+For submission, provide the repository link and the readable demonstration report. No additional UI or deployment is needed to demonstrate the assignment requirements.
