@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+data/
+.superpowers/
+.claude/
+*.egg-info/
+dist/
+# Supplied recruiting documents: do not redistribute without permission.
+Knowledge Base/
+Technical_Assignment_AI_Engineer.pdf
