@@ -34,6 +34,27 @@ Interpretation: evidence coverage is high, but reference agreement and citation 
 
 The prompt's uncited-message issue did not recur in these ten evaluated outputs. This observation does not close the code-level enforcement gap. Full questions, cited answers, references, pair verdicts and per-case metrics are available through the Markdown converter.
 
+## Follow-up review and ranking check — 26 October 2026
+
+The four flagged answers (closure, recurring complaints, update cadences, security after hours) were compared with the full original PDF pages, including visual inspection of scans. No substantive policy error was identified in those four full answers. This is a targeted review, not a guarantee for other or future answers.
+
+- **Closure:** the full answer includes the P1 exception, but the isolated general statement was penalized for omitting it. The reference also omits the valid customer-confirmed resolution closure route. Keeping rules/exceptions together would improve clarity.
+- **Recurring complaints:** the answer preserves the same-issue/30-day condition from KB02 section 6. The shorter reference omits that qualification. The precise correctness deduction is unknown because no detailed verdict was saved.
+- **Update cadences:** both timings and audiences match KB03 section 4 and KB04 section 5. The classification comparison combines two sources, so the each-passage-must-support-every-part rubric penalizes valid joint evidence. Its Context Precision score of zero is questionable: the two annotated required pages rank first and second.
+- **Security:** the answer's claims match KB04 sections 2, 3 and 6. The Faithfulness deduction is unexplained; OCR substitutions and judge variability are possible factors, not verified causes.
+
+Do not replace historical scores with manually improved numbers. Future evaluation should expand abbreviated references, distinguish joint citation sufficiency from individual citation relevance, and retain claim-level judge verdicts where available.
+
+An offline page-ranking check reused the same saved run and embedded golden source annotations, excluding unsupported/clarification cases. Six expected-answerable cases yielded Recall@1 **0.583**, Recall@2 **0.833**, Recall@4 **1.000**, and MRR **0.806**. Multiple annotated sections on one page count once. The security escalation page ranks third, so top-2 retrieval would omit required evidence. Keeping all four short pages is therefore a measured coverage trade-off, not evidence of strong selective retrieval. See [ranking details](retrieval-ranking.md).
+
+Reproduce without model calls:
+
+```powershell
+uv run python -m sop_assistant.retrieval_report --input data/evaluation-english-prompt.json --output data/retrieval-ranking-new.md
+```
+
+The source run under `data/` is not bundled; the published Markdown preserves its SHA256 and observed rankings. To inspect rankings for a new run, provide that run's JSON instead.
+
 ## Comprehensive metrics
 
 | Metric | Purpose | Applicability |
