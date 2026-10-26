@@ -41,7 +41,7 @@ def ask(question, index, provider):
     if not question.strip():
         raise ValueError("Question must not be empty.")
     started = time.perf_counter()
-    evidence = index.search(provider.embed([question])[0])
+    evidence = index.search(provider.embed([question], query=True)[0], limit=16)
     answer = provider.answer(question, evidence)
     return dict(
         answer,
@@ -77,6 +77,9 @@ def main(argv=None):  # pylint: disable=too-many-locals,too-many-branches
             return 0
         embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         dimensions = int(os.getenv("OPENAI_EMBEDDING_DIMENSIONS", "1536"))
+        if os.getenv("EMBEDDING_BACKEND", "openai") == "local":
+            embedding_model = "google/embeddinggemma-300m"
+            dimensions = 768
         with Index(
             Path(os.getenv("QDRANT_PATH", "data/qdrant")), embedding_model, dimensions
         ) as index:

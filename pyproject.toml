@@ -10,6 +10,7 @@ dependencies = [
     "python-dotenv>=1,<2",
     "pydantic>=2,<3",
     "huggingface-hub>=2.3.0",
+    "sentence-transformers>=6.2.0",
 ]
 
 [dependency-groups]

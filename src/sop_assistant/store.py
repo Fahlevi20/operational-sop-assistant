@@ -13,7 +13,7 @@ class Index:
     def __init__(self, path: Path, model: str, dimensions: int):
         path.mkdir(parents=True, exist_ok=True)
         self.manifest_path = path / "manifest.json"
-        self.config = {"model": model, "dimensions": dimensions, "chunking": 1}
+        self.config = {"model": model, "dimensions": dimensions, "chunking": 2}
         self.manifest = None
         if self.manifest_path.exists():
             self.manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))

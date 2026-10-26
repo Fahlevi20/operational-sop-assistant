@@ -2,22 +2,25 @@
 
 A document-grounded AI assistant for operational SOPs, built with Python and Qdrant, with source citations and safe handling of unsupported questions.
 
-Recruitment proof of concept for PT Inti Nya Teknologi. Runs locally as a CLI; OpenAI provides embeddings and answer generation. No Docker, GPU, or frontend required.
+Recruitment proof of concept for PT Inti Nya Teknologi. Runs locally as a CLI with CPU EmbeddingGemma embeddings and local Qdrant. Answering uses a configurable OpenAI-compatible endpoint; the current local setup uses OmniRoute with `ddgw/gpt-5.4-mini`. No Docker, GPU, or frontend required.
 
 ## Development status
 
-Work in progress, not the final recruitment submission. The current inference adapter uses OpenAI; migration to local EmbeddingGemma embeddings and OpenRouter free-model answering is planned but **not integrated yet**. The EmbeddingGemma download utility is available via `uv run python -m sop_assistant.download`. Offline tests and extraction have been verified; live ingestion/answering and Ragas scoring are not yet validated. The attempted OpenAI embedding request was blocked by exhausted API credits.
+Work in progress, not the final recruitment submission. Local EmbeddingGemma CPU inference and ingestion have been verified. OmniRoute answering is integrated; full golden evaluation and Ragas validation are in progress. The route passed synthetic tests but ignored the JSON-schema parameter on a real-evidence request, so schema instructions are also included explicitly in the prompt and all output is locally validated. Model identity, availability, and costs are controlled by the user's provider, not inferred from route names.
 
 HR has approved a public repository. Supplied PDFs remain excluded from this initial code snapshot; reviewers can place the supplied SOPs in `Knowledge Base/`.
 
 ## Quick start (PowerShell)
 
-Prerequisites: Python 3.11+, [uv](https://docs.astral.sh/uv/), OpenAI API access. The included scan OCR adapter requires Windows with an installed OCR language pack. Tested locally with Windows 11 and Python 3.13.
+Prerequisites: Python 3.11+, [uv](https://docs.astral.sh/uv/), downloaded EmbeddingGemma weights, and an authorized OpenAI-compatible LLM endpoint (OmniRoute in the tested local configuration). The included scan OCR adapter requires Windows with an installed OCR language pack. Tested locally with Windows 11 and Python 3.13.
 
 ```powershell
 uv sync --locked
 Copy-Item .env.example .env
-# Edit .env locally and set OPENAI_API_KEY. Never share the key.
+# Edit .env locally and set OMNIROUTE_API_KEY. Keep OmniRoute running.
+# Accept Gemma terms on Hugging Face, then:
+uv run hf auth login
+uv run python -m sop_assistant.download
 uv run sop extract
 # Inspect data/pages.json, especially numbers and identifiers from scans.
 uv run sop ingest
@@ -85,10 +88,16 @@ Offline tests use synthetic PDFs, mocked API boundaries, and real temporary loca
 uv run sop evaluate
 # Additional paid LLM judge calls; optional dependencies are separate.
 uv sync --locked --group eval
-uv run --group eval python -m sop_assistant.evaluation
+uv run --group eval python -m sop_assistant.evaluation --input data/evaluation-english-prompt.json --output data/ragas-comprehensive.json
+# Offline conversion: no model calls. Choose a new output filename on repeat runs.
+uv run python -m sop_assistant.report --input data/ragas-comprehensive.json --output data/ragas-comprehensive.md
 ```
 
-Actual generation outputs are written incrementally to `data/evaluation.json`; Ragas scores go to `data/ragas.json`. The Ragas runner uses the collection-based **Faithfulness** metric for answered cases. It separately records expected-status agreement. Abstention/clarification cases are not assigned a misleading faithfulness score; review them manually. References are preserved for that review; this runner does not claim to compute reference correctness or context recall.
+Select the actual generation file you want to evaluate; the example uses the saved English-prompt experiment. The evaluator measures **Faithfulness**, **Factual Correctness F1**, **Context Precision**, **Context Recall**, and **Response Relevancy** (Ragas `AnswerRelevancy`). Relevancy uses local EmbeddingGemma, not hosted embeddings. It also records deterministic citation coverage/validity/metadata checks and custom model-judged citation support, uncited-message checks, and answer/abstention/clarification quality. Custom checks are not official Ragas metrics.
+
+Reference correctness and retrieval metrics apply to expected-answerable cases. Faithfulness evaluates factual statements across all statuses; pure absence notices do not receive fabricated grounding scores. Skipped, uncertain and failed measurements remain explicit and are excluded from means. Expected-status agreement remains separate from answer quality.
+
+Results are checkpointed with source-file SHA256, judge configuration, metric settings and completion counts. Historical generation configuration that was not recorded is marked unknown. Existing outputs are not overwritten. Evaluation makes additional judge requests and can encounter rate limits or charges; Markdown conversion is offline. The report includes per-case answers/citations, metric explanations and review findings without blending unrelated metrics into one overall score.
 
 Ragas 0.4 imports legacy LangChain modules, so the evaluation group pins compatible LangChain versions. This keeps the heavier evaluation stack separate from the application.
 
